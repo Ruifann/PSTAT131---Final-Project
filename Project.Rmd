@@ -1,0 +1,501 @@
+---
+title: "PSTAT131 - Final Project"
+author: "Ruifan Wang"
+output:
+    html_document:
+      toc: true
+      toc_float: true
+      code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE,
+                      warning = FALSE)
+```
+
+### Introduction
+
+In many countries, housing price is determined by the size of a house. For example, in the
+same community, the sale price is calculated by using house area and price per square meter.
+No matter how many bedrooms one house has if two houses are the same size, their sale
+prices are the same. In this case, there is a linear relationship between the housing price
+and the house size. In a city with large population density such as Hong Kong, housing price is incredibly high and the only housing option for the majority is apartments.  
+
+![Fig 1. Hong Kong Night View](images/hongkong.jpeg){width="400"}  
+
+However, in the United States, housing price is not determined by a single vector. There are many explanatory variables that contributes to the housing price. People could live in a house with its own garage and pool.  
+
+
+![Fig 2. American Housing](images/america.jpeg){width="400"}  
+
+Now, let’s take a look at one Kaggle competition: ”House Prices - Advanced Regression
+Techniques”.  
+
+
+For this project, we will work with the file `"test.csv"`, found in `/data/house_prices`. The file is from Kaggle: <https://www.kaggle.com/competitions/house-prices-advanced-regression-techniques/data>.
+
+
+```{r}
+library(recipes)
+library(workflows)
+library(dplyr)
+library(parsnip)
+library(tidymodels)
+library(ISLR)
+library(ISLR2)
+library(tidyverse)
+library(glmnet)
+tidymodels_prefer()
+library(ggplot2)
+library(readr)
+library(gplots)
+library(repr)
+library(caret)
+library(rpart.plot)
+library(vip)
+```
+```{r}
+library(discrim)
+library(poissonreg)
+library(corrr)
+library(klaR) # for naive bayes
+```
+
+```{r}
+library(janitor)
+library(rsample)
+```
+
+### Data Cleaning and Missing Data  
+
+
+After read the csv file, we will use janitor package to clean the names of the variables.
+Then, we have to check the missing data in the dataset and be familiarized with the dataset
+variables.  
+
+
+
+```{r}
+train_data <- read_csv("~/Downloads/house_prices/train.csv") %>%
+  clean_names()
+```
+
+```{r}
+test_data <- read_csv("~/Downloads/house_prices/test.csv") %>%
+  clean_names()
+```
+```{r}
+missing_row <- train_data[!complete.cases(train_data),]
+head(missing_row)
+```
+```{r}
+variables <- names(train_data)
+variables
+```
+
+### Simple Linear Regression
+
+#### Data selection
+
+There are 81 different variables in the dataset. Since simple linear regression only uses
+numerical data, in this case, all the non-numerical variables is out of consideration.
+After selecting all the numerical variables from the original dataset, there are 13 predictors
+and 1 outcome variable left.
+
+
+
+```{r}
+select_train <- train_data %>%
+  select(overall_qual,overall_cond,year_built, gr_liv_area, bedroom_abv_gr, kitchen_abv_gr, tot_rms_abv_grd, 
+         fireplaces, garage_area, open_porch_sf, pool_area, mo_sold, yr_sold, sale_price)
+head(select_train)
+```
+```{r}
+summary(select_train$sale_price)
+```
+
+
+```{r}
+hist(select_train$sale_price, xlab = "sale price", ylab = "counts", xlim = c(30000, 760000), main = "Histogram of sale price")
+```
+```{r}
+select_train <- select_train %>%
+  mutate(sale_price = log(sale_price))
+```
+```{r}
+summary(select_train$sale_price)
+```
+
+
+```{r}
+hist(select_train$sale_price, xlab = "sale price", ylab = "counts", main = "Histogram of sale price")
+```
+```{r}
+typeof(select_train)
+names(select_train)
+```
+
+Because we know nothing about the correlation of the variables, we can randomly select one
+variable as the predictor and check the accuracy of the model by using its R-squared value.
+For example, we are interested in the relationship between the sale price and total number
+of rooms the house has.   
+
+
+```{r}
+reg_rms <- lm(sale_price ~ tot_rms_abv_grd, data = select_train)
+summary(reg_rms)
+```
+
+
+```{r}
+ggplot(select_train, aes(x = tot_rms_abv_grd, y = sale_price)) + 
+  geom_point() +
+  stat_smooth(method = "lm", col = "red")
+```
+
+
+It has an adjusted R-squared value of 0.2851, which means that only 28.51% of the data
+is explained by the total number of rooms the house has. Apparently, we are not going to
+draw the linear regression graph between sale price and each explanatory variables. Indeed,
+we will draw a correlation graph of all our selected variables and choose the one with the
+highest correlation coefficient with the outcome variables.  
+
+
+
+
+```{r}
+cor_select <- select_train %>%
+  correlate()
+```
+```{r}
+rplot(cor_select)
+```
+```{r}
+cor_select %>%
+  stretch() %>%
+  ggplot(aes(x, y, fill = r)) +
+  geom_tile() +
+  geom_text(aes(label = as.character(fashion(r))))+
+  scale_x_discrete(guide = guide_axis(angle = 45)) +
+  NULL
+```
+#### Simple Linear Regression
+
+Based on the correlation graph, we can see that the overall quality of a house has the highest
+correlation with sale price. Thus, the best simple linear regression model will has overall
+quality as the explanatory variable and sale price as the dependent variable.
+
+
+```{r}
+reg_qual <- lm(sale_price ~ overall_qual, data = select_train)
+summary(reg_qual)
+```
+
+The adjusted R-squared value is 0.6676 that means the model has an accuracy of 66.76%.
+The coefficient of the predictor value is 0.236 shows that the overall quality has a positive
+correlation with the sale price. Due to the limitation of the simple linear regression model,
+this is the best model we can built so far.  
+
+
+```{r}
+ggplot(select_train, aes(x = overall_qual, y = sale_price)) + 
+  geom_point() +
+  stat_smooth(method = "lm", col = "red")
+```
+
+### Multiple Linear Regression
+
+In this section, we will introduce another model which is multiple linear regression model. As
+what mentioned in the previous section, adding more predictor variables can help increasing
+the accuracy of our prediction model. First, we will try to use all the predictors.  
+
+
+```{r}
+reg <- lm(sale_price~.-sale_price, data = select_train)
+summary(reg)
+```
+As we can see there is a significant improve in the model accuracy, but some predictors
+are not significant in the prediction model. The model assumed that all the predictors can
+be used as an explanatory variables. However in statistics, predictors has a p-value less
+than 0.05 is considered as statistically significant. So, we can eliminate those statistically
+insignificant predictors and does not harm the accuracy of the model.
+
+#### Reducing Predictor Size
+
+
+```{r}
+reg <- lm(sale_price~ overall_qual + overall_cond + year_built + gr_liv_area + kitchen_abv_gr + fireplaces + garage_area + pool_area, data = select_train)
+summary(reg)
+```
+
+Now, we have a smaller group of predictors. but the same R-squared value. When we look
+more closely to the data, we will find out that only one house in the dataset has a pool, which
+means more than 99% of the house has a pool area of 0. Sometimes when we have several
+predictors and a R-squared value, the model may run into a problem called overfitting. Next,
+we will try to reduced the size of predictors and check the difference in model accuracy.
+
+
+```{r}
+reg1 <- lm(sale_price~ overall_qual + overall_cond + year_built + gr_liv_area  + fireplaces + garage_area, data = select_train)
+summary(reg1)
+```
+
+```{r}
+reg2 <- lm(sale_price~ overall_qual + overall_cond + year_built + gr_liv_area  + fireplaces, data = select_train)
+summary(reg2)
+```
+
+
+
+
+
+
+
+
+```{r}
+reg_multi <- lm(sale_price~ overall_qual + overall_cond + year_built + gr_liv_area  + fireplaces, data = select_train)
+summary(reg_multi)
+```
+Without predictors: ”kitchen abv gr” and ”pool area”, the model remains the same level
+of accuracy. Thus, ”kitchen abv gr” may be dependent with another predictor variable and
+”pool area” can be seen as a zero vector. After eliminated these two predictor vectors, the
+predictor matrix has the same rank. So, the new model has the same accuracy level, but
+less predictors.
+
+#### Training and Testing data
+
+After we have the best model we can achieve using multiple linear regression model. Out
+of curiosity, we can use machine learning to test our model. First of all, we split the data
+into training and testing groups. Since the test file that Kaggle provided does not has sale
+price, we will use the train file instead. Then, we set up a recipe with our multiple regression
+model and fit our model to the train data. Next, we can predict the sale price of our test
+data and comparing it with the actual price.  
+
+
+```{r}
+set.seed(123)
+
+select_split <- initial_split(select_train, prop = 0.80,
+                                strata = sale_price)
+train <- training(select_split)
+test <- testing(select_split)
+```
+
+
+
+```{r}
+house_recipe <- recipe(sale_price~ overall_qual + overall_cond + year_built + gr_liv_area  + fireplaces + garage_area, data = train)
+```
+
+```{r}
+lm_model <- linear_reg() %>% 
+  set_engine("lm")
+lm_wflow <- workflow() %>% 
+  add_model(lm_model) %>% 
+  add_recipe(house_recipe)
+```
+
+```{r}
+lm_fit <- fit(lm_wflow, train)
+```
+
+
+```{r}
+lm_fit %>%
+  extract_fit_parsnip() %>% 
+  tidy()
+```
+
+By combining the model prediction values with the actual values, we can generate a plot of
+predicted values vs. actual values.
+
+```{r}
+test_res <- predict(lm_fit, new_data = test %>% select(-sale_price))
+test_res %>% 
+  head()
+
+```
+```{r}
+test_res <- bind_cols(test_res, test %>% select(sale_price))
+test_res %>% 
+  head()
+```
+```{r}
+test_res %>% 
+  ggplot(aes(x = .pred, y = sale_price)) +
+  geom_point(alpha = 0.2) +
+  geom_abline(lty = 2) + 
+  theme_bw() +
+  coord_obs_pred()
+```
+As we can see that the dots spread along the line, the model did a pretty good job in
+predicting the sale price. We can also check the RMSE value and R-squared value to evaluate
+the model accuracy.
+
+```{r}
+predict_metrics <- metric_set(rmse, rsq, mae)
+predict_metrics(test_res, truth = sale_price, 
+                estimate = .pred)
+```
+#### Summary
+From our prediction model and explanatory variables, we find out that in the data set, only one house has a pool.
+
+```{r}
+summary(train$pool_area)
+```
+The number of fire places plays an important rule in the prediction model. So, we can guess that those data are collected from a cold place. In the next section, we can add some data about heating and other house conditions in another model.
+
+
+### Classification & Regression Trees Model
+
+In this section, we will explore more explanatory variables. Since we did not consider the non-numerical data, we will use more methods, such as classification and regression tree models to predict the housing prices. As we said in the previous section, these data may come from a cold place, so we want to evaluate the heating condition and air control in the house. Since in cold places, people spend a lot of time indoor and these vectors are definitely what they care about when they are buying a house.
+
+```{r}
+#Since each of the factors evaluate the condtion of the exterior material and heating conditon, we can convert the factors to numerical value.
+train_data$exter_cond <- as.numeric(factor(train_data$exter_cond, 
+                                  levels = c("Ex", "Fa","Gd", "TA","Po"),
+                                  labels = c(5,2,4,3,1) ,ordered = TRUE))
+train_data$heating_qc <- as.numeric(factor(train_data$heating_qc, 
+                                  levels = c("Ex", "Fa","Gd", "TA","Po"),
+                                  labels = c(5,2,4,3,1) ,ordered = TRUE))
+```
+
+Now, we can create a new select dataset and add in our new predictors.
+```{r}
+new_select_data <- train_data %>%
+  select(overall_qual, overall_cond, year_built, gr_liv_area, fireplaces, garage_area, central_air, heating_qc, exter_cond, sale_price)
+head(new_select_data)
+```
+Similar to the first regression part, we will add cross fold validation.
+
+
+```{r}
+set.seed(131)
+new_split <- initial_split(new_select_data, prop =0.8, strata = "sale_price")
+
+new_train <- training(new_split)
+new_test <- testing(new_split)
+
+new_fold <- vfold_cv(new_train, v = 5, strata = "sale_price")
+```
+
+Here is a new recipe that we will use in the classification tree model.
+```{r}
+price_recipe <- recipe(sale_price~ overall_qual + overall_cond + year_built + gr_liv_area  + fireplaces + garage_area + central_air + heating_qc + exter_cond, data = new_train)  %>%
+  step_dummy(all_nominal_predictors()) %>%
+  step_normalize(all_predictors())
+```
+
+```{r}
+class.tree <- rpart(sale_price~ overall_qual + overall_cond + year_built + gr_liv_area  + fireplaces + garage_area + central_air + heating_qc + exter_cond,
+                    data = new_train, control = rpart.control(cp = 0.01))
+
+plotcp(class.tree)
+printcp(class.tree)
+```
+```{r}
+rpart.plot(class.tree)
+```
+Other than classification trees, we also want to try regression trees and we will use the recipe from our previous section.
+
+
+
+```{r}
+tree_spec <- decision_tree() %>%
+  set_engine("rpart")
+
+reg_tree_spec <- tree_spec %>%
+  set_mode("regression")
+
+reg_tree_fit <- fit(reg_tree_spec, 
+                    sale_price~ overall_qual + overall_cond + year_built + gr_liv_area  + fireplaces + garage_area + central_air + heating_qc + exter_cond, new_train)
+
+augment(reg_tree_fit, new_data = new_test) %>%
+  rmse(truth = sale_price, estimate = .pred)
+```
+
+```{r}
+reg_tree_fit %>%
+  extract_fit_engine() %>%
+  rpart.plot()
+```
+```{r}
+reg_tree_wf <- workflow() %>%
+  add_model(reg_tree_spec %>% set_args(cost_complexity = tune())) %>%
+  add_formula(sale_price~ overall_qual + overall_cond + year_built + gr_liv_area  + fireplaces)
+
+set.seed(3435)
+reg_fold <- vfold_cv(new_train)
+
+param_grid <- grid_regular(cost_complexity(range = c(-4, -1)), levels = 5)
+
+tune_res <- tune_grid(
+  reg_tree_wf, 
+  resamples = reg_fold, 
+  grid = param_grid
+)
+```
+
+```{r}
+autoplot(tune_res)
+```
+We select the best-performing model according to `rmse` and fit the final model on the whole training data set.
+
+```{r}
+best_complexity <- select_best(tune_res, metric = "rmse")
+
+reg_tree_final <- finalize_workflow(reg_tree_wf, best_complexity)
+
+reg_tree_final_fit <- fit(reg_tree_final, data = new_train)
+```
+
+Now we can see a more complex decision tree than the previous one. 
+```{r}
+reg_tree_final_fit %>%
+  extract_fit_engine() %>%
+  rpart.plot()
+```
+
+
+### Random Forest Model
+
+Now in this section, we will explore bagging and random forest model with our new predictors and test its accuracy.
+
+```{r}
+bagging_spec <- rand_forest(mtry = .cols()) %>%
+  set_engine("randomForest", importance = TRUE) %>%
+  set_mode("regression")
+```
+
+```{r}
+bagging_fit <- fit(bagging_spec, sale_price~ overall_qual + overall_cond + year_built + gr_liv_area  + fireplaces + garage_area + heating_qc + exter_cond, 
+                   data = new_train)
+```
+
+```{r}
+augment(bagging_fit, new_data = new_test) %>%
+  rmse(truth = sale_price, estimate = .pred)
+```
+
+Let's check out our precition comparing to the actual test value
+```{r}
+augment(bagging_fit, new_data = new_test) %>%
+  ggplot(aes(sale_price, .pred)) +
+  geom_abline() +
+  geom_point(alpha = 0.5)
+```
+We can see that our model did a pretty good job, but there is also some outliers at the end. 
+
+Then let's check the importance of the variables and see if it fits our previous prediction.  
+
+
+
+```{r}
+vip(bagging_fit)
+```  
+
+
+As we can see that the above ground living area plays a big role in the prediction. However, there are extra factors such as fireplace and heating contion also important to the data set.
+
+### Conclusion
+From all the model we fit and data we trained, we can say that people cares about the area above ground the most and the garage area of the house. But comparing to the model we did in lab7, these data also has  important predictors such as fireplace and heating condition. Thus we may conclude that from this Kaggle competition, the housing data may come from a cold place in the U.S or European countries, where has sparse population and more land per people. In Asian countries, there is almost no tradition of fireplaces in  the house and they also adopt another housing type in the cities.
