@@ -457,7 +457,7 @@ reg_tree_final_fit %>%
 ```
 
 
-### Random Forest Model
+### Bagging and Random Forest Model
 
 Now in this section, we will explore bagging and random forest model with our new predictors and test its accuracy.
 
@@ -496,6 +496,35 @@ vip(bagging_fit)
 
 
 As we can see that the above ground living area plays a big role in the prediction. However, there are extra factors such as fireplace and heating contion also important to the data set.
+
+Then, we will put down a random forest model.
+
+```{r}
+rf_spec <- rand_forest(mtry = 6) %>%
+  set_engine("randomForest", importance = TRUE) %>%
+  set_mode("regression")
+```
+Next, we fit the model,
+```{r}
+rf_fit <- fit(rf_spec, sale_price~ overall_qual + overall_cond + year_built + gr_liv_area  + fireplaces + garage_area + heating_qc + exter_cond, data = new_train)
+```
+
+```{r}
+augment(rf_fit, new_data = new_train) %>%
+  rmse(truth = sale_price, estimate = .pred)
+```
+
+```{r}
+augment(rf_fit, new_data = new_test) %>%
+  ggplot(aes(sale_price, .pred)) +
+  geom_abline() +
+  geom_point(alpha = 0.5)
+```
+This looks very similar to our bagging model. Next, we will see the importance of each variable in the random forest model.
+
+```{r}
+vip(rf_fit)
+```
 
 ### Conclusion
 From all the model we fit and data we trained, we can say that people cares about the area above ground the most and the garage area of the house. But comparing to the model we did in lab7, these data also has  important predictors such as fireplace and heating condition. Thus we may conclude that from this Kaggle competition, the housing data may come from a cold place in the U.S or European countries, where has sparse population and more land per people. In Asian countries, there is almost no tradition of fireplaces in  the house and they also adopt another housing type in the cities.
